@@ -9,6 +9,8 @@ const ownerSchema = new mongoose.Schema({
     phone: Number,
     gymname: String,
     password: String,
+    city: String,
+    category: String,
     newmembers: [{
         _id: ObjectId,
         userName: {
@@ -43,7 +45,10 @@ const ownerSchema = new mongoose.Schema({
         eveningOpening: String,
         eveningClosing: String,
         gymAddress: String,
-        descreption: String
+        descreption: String,
+        city: String,
+        category: String,
+
     }],
 
 });
@@ -77,9 +82,9 @@ ownerSchema.methods.generateAuthToken = async function () {
 // }
 
 
-ownerSchema.methods.aboutgym = async function (morningOpening, morningClosing, eveningOpening, eveningClosing, gymAddress, descreption) {
+ownerSchema.methods.aboutgym = async function (morningOpening, morningClosing, eveningOpening, eveningClosing, gymAddress, descreption, city, category) {
     try {
-        this.gymDetails = this.gymDetails.concat({ morningOpening, morningClosing, eveningOpening, eveningClosing, gymAddress, descreption })
+        this.gymDetails = this.gymDetails.concat({ morningOpening, morningClosing, eveningOpening, eveningClosing, gymAddress, descreption, city, category })
         await this.save();
         return this.aboutgym
     } catch (error) {

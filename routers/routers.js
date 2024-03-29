@@ -131,7 +131,7 @@ routers.post("/addmember", OwnerAuth, async (req, res) => {
     try {
         const _id = new ObjectId()
         const { userName, name, phone, address, registerdate, planeType, amount, dite, remark, feeDuration,
-            morningOpening, morningClosing, eveningOpening, eveningClosing, gymAddress, descreption, gymname } = req.body
+            morningOpening, morningClosing, eveningOpening, eveningClosing, gymAddress, descreption, gymname, city,category } = req.body
 
         // console.log(userName);
 
@@ -146,7 +146,7 @@ routers.post("/addmember", OwnerAuth, async (req, res) => {
                 return res.status(402).send({ error: "UserName Already Present" })
             }
             else {
-                const PortalAddMember = new Member({ userName, name, phone, address, gymname, feeHistory: { registerdate, planeType, amount, feeDuration, remark }, dite, _id, gymDetails: { updateid, morningOpening, morningClosing, eveningOpening, eveningClosing, gymAddress, descreption } })
+                const PortalAddMember = new Member({ userName, name, phone, address, gymname, feeHistory: { registerdate, planeType, amount, feeDuration, remark }, dite, _id, gymDetails: { updateid, morningOpening, morningClosing, eveningOpening, eveningClosing, gymAddress, descreption, city ,category } })
                 // const ownerAddMember = await newMember.addmember(userName, name, phone, address, registerdate, planeType, amount, dite, feeDuration, _id)
                 const z = newMember.newmembers.push({ userName, name, phone, address, registerdate, planeType, amount, dite, feeDuration, _id, feeHistory: { registerdate, feeDuration, planeType, amount, remark } })
                 res.status(200).json({ message: "Member Added Successfully" })
@@ -261,13 +261,14 @@ routers.patch("/updatemember/:id", OwnerAuth, async (req, res) => {
 })
 
 routers.patch("/updategymDetails", OwnerAuth, async (req, res, next) => {
-    const { morningOpening, morningClosing, eveningOpening, eveningClosing, gymAddress, descreption } = req.body
+    const { morningOpening, morningClosing, eveningOpening, eveningClosing, gymAddress, descreption,city, category } = req.body
 
+    console.log(city+"  "+ category)
     const gymnam = req.rootUser.gymname
     // const id = req.userID
 
     try {
-        if (!morningOpening) {
+        if (!morningOpening || !city || !category) {
             return res.status(422).json({ message: "Fill all the fields" });
         }
         const owner = await Owner.findOne({ _id: req.userID });
@@ -284,7 +285,10 @@ routers.patch("/updategymDetails", OwnerAuth, async (req, res, next) => {
                 element.eveningOpening = eveningOpening;
                 element.eveningClosing = eveningClosing;
                 element.gymAddress = gymAddress;
+                element.city = city;
+                element.category = category;
                 element.descreption = descreption;
+                
             });
             x.save();
         })
@@ -295,6 +299,9 @@ routers.patch("/updategymDetails", OwnerAuth, async (req, res, next) => {
         ownergymUpdate.eveningOpening = eveningOpening;
         ownergymUpdate.eveningClosing = eveningClosing;
         ownergymUpdate.gymAddress = gymAddress;
+        ownergymUpdate.city = city;
+        ownergymUpdate.category = category;
+        
         ownergymUpdate.descreption = descreption;
 
         // await memberPortal.save(); 
@@ -325,7 +332,7 @@ routers.delete("/deleteMember/:id", OwnerAuth, async (req, res) => {
 
 
 routers.post("/addgymDetails", OwnerAuth, async (req, res) => {
-    const { morningOpening, morningClosing, eveningOpening, eveningClosing, gymAddress, descreption } = req.body;
+    const { morningOpening, morningClosing, eveningOpening, eveningClosing, gymAddress, descreption, city , category } = req.body;
 
     if (!morningOpening) {
         console.log("PLZ fill the form");
@@ -335,7 +342,7 @@ routers.post("/addgymDetails", OwnerAuth, async (req, res) => {
     const addDetails = await Owner.findOne({ _id: req.userID });
 
     if (addDetails) {
-        const addExtraDetails = await addDetails.aboutgym(morningOpening, morningClosing, eveningOpening, eveningClosing, gymAddress, descreption);
+        const addExtraDetails = await addDetails.aboutgym(morningOpening, morningClosing, eveningOpening, eveningClosing, gymAddress, descreption, city , category);
         res.status(201).json({ message: "Details Added Successfully" })
     }
 

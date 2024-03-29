@@ -27,6 +27,8 @@ const memberSchema = new mongoose.Schema({
         eveningOpening: String,
         eveningClosing: String,
         gymAddress: String,
+        city:String,
+        category:String,
         descreption: String
     }],
     attendance: [{
