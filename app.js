@@ -13,6 +13,13 @@ const port = process.env.PORT
 app.use(express.json());
 app.use(cors());
 
+
+const fileUpload = require("express-fileupload");
+app.use(
+    fileUpload({
+      useTempFiles: true,
+    })
+  );
 app.use(require("./routers/routers"))
 
 app.listen(5001, () => {

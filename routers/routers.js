@@ -12,6 +12,100 @@ const Owner = require("../models/ownerSchema");
 const Member = require("../models/memberSchema")
 const ObjectId = require("mongodb").ObjectId;
 
+//face recog.------
+const faceapi = require("face-api.js");
+const { Canvas, Image } = require("canvas");
+const canvas = require("canvas");
+const mongoose = require("mongoose");
+const member = require("../models/memberSchema");
+
+faceapi.env.monkeyPatch({ Canvas, Image });
+
+
+async function LoadModels() {
+    // Load the models
+    // __dirname gives the root directory of the server
+    await faceapi.nets.faceRecognitionNet.loadFromDisk(__dirname + "/models");
+    await faceapi.nets.faceLandmark68Net.loadFromDisk(__dirname + "/models");
+    await faceapi.nets.ssdMobilenetv1.loadFromDisk(__dirname + "/models");
+}
+LoadModels();
+
+const faceSchema = new mongoose.Schema({
+    label: {
+        type: String,
+        required: true
+    },
+    descriptions: {
+        type: Array,
+        required: true,
+    },
+});
+
+const FaceModel = mongoose.model("Face", faceSchema);
+
+
+
+routers.get("/facedata", async (req, res) => {
+    let faces = await FaceModel.find();
+
+    res.send({ faces });
+})
+
+routers.post("/post-face", async (req, res) => {
+
+    if (!req.body.File1 || !req.body.label) {
+        return res.status(400).send('Missing name or image data.');
+    }
+
+    const File1 = req.body.File1;
+    const label = req.body.label
+    console.log("recived files")
+
+    try {
+        let result = await uploadLabeledImages([File1], label);
+        res.status(200).send({ result });
+    }
+    catch (err) {
+        res.status(500).send({ message: "Something went wrong, please try again." })
+
+    }
+})
+
+routers.post("/check-face", async (req, res) => {
+
+    try {
+        // console.log(req.body);
+
+        const File1 = req.body.File1;
+
+        // const File1 = req.files.File1.tempFilePath;
+        let result = await getDescriptorsFromDB(File1);
+        
+        if (!result) {
+            res.status(201).json({ result: "false" })
+            console.log(result+"no data");
+          }
+          else{
+            console.log(result);
+            res.status(200).json({ result });
+      
+          }
+    }
+    catch (err) {
+        console.log("err");
+        res.status(500).send({ result: "falied" });
+    }
+
+
+
+});
+
+routers.get("/testface", async (req, res) => {
+    res.status(200).send({ working: "true" });
+})
+//----------------
+
 routers.get("/", (req, res) => {
     res.send("Router is running")
 });
@@ -126,17 +220,76 @@ routers.delete("/deleteOwner", OwnerAuth, async (req, res) => {
 routers.get("/memberHome", MemberAuth, (req, res) => {
     res.send(req.rootUser)
 })
+async function uploadLabeledImages(images, label) {
+    try {
+        let counter = 0;
+        const descriptions = [];
+        // Loop through the images
+        for (let i = 0; i < images.length; i++) {
 
+            const img = await canvas.loadImage(images[i]);
+
+            // counter = (i / images.length) * 100;
+            console.log("registration face");
+
+            const detections = await faceapi.detectSingleFace(img).withFaceLandmarks().withFaceDescriptor();
+            descriptions.push(detections.descriptor);
+
+        }
+
+        // Create a new face document with the given label and save it in DB
+        const createFace = new FaceModel({
+            label: label,
+            descriptions: descriptions,
+        });
+
+        await createFace.save();
+        return true;
+
+    } catch (error) {
+        console.log("error no face found");
+        return (false);
+    }
+}
+
+async function getDescriptorsFromDB(image) {
+    // Get all the face data from mongodb and loop through each of them to read the data
+    let faces = await FaceModel.find();
+    for (i = 0; i < faces.length; i++) {
+        // Change the face data descriptors from Objects to Float32Array type
+        for (j = 0; j < faces[i].descriptions.length; j++) {
+            faces[i].descriptions[j] = new Float32Array(Object.values(faces[i].descriptions[j]));
+        }
+        // Turn the DB face docs to
+        faces[i] = new faceapi.LabeledFaceDescriptors(faces[i].label, faces[i].descriptions);
+    }
+
+    // Load face matcher to find the matching face
+    const faceMatcher = new faceapi.FaceMatcher(faces, 0.6);
+
+    // Read the image using canvas or other method
+    const img = await canvas.loadImage(image);
+    let temp = faceapi.createCanvasFromMedia(img);
+    // Process the image for the model
+    const displaySize = { width: img.width, height: img.height };
+    faceapi.matchDimensions(temp, displaySize);
+
+    // Find matching faces
+    const detections = await faceapi.detectAllFaces(img).withFaceLandmarks().withFaceDescriptors();
+    const resizedDetections = faceapi.resizeResults(detections, displaySize);
+    const results = resizedDetections.map((d) => faceMatcher.findBestMatch(d.descriptor));
+    return results;
+}
 routers.post("/addmember", OwnerAuth, async (req, res) => {
     try {
         const _id = new ObjectId()
         const { userName, name, phone, address, registerdate, planeType, amount, dite, remark, feeDuration,
-            morningOpening, morningClosing, eveningOpening, eveningClosing, gymAddress, descreption, gymname, city,category } = req.body
+            morningOpening, morningClosing, eveningOpening, eveningClosing, gymAddress, descreption, gymname, city, category } = req.body
 
         // console.log(userName);
 
         const updateid = req.body._id
-        if (!userName || !name || !phone || !address || !registerdate || !planeType || !amount) {
+        if (!userName || !name || !phone || !address || !registerdate || !planeType || !amount || !req.body.File1) {
             return res.status(422).json({ error: "Plz fill the form" })
         }
         const newMember = await Owner.findOne({ _id: req.userID })
@@ -146,10 +299,36 @@ routers.post("/addmember", OwnerAuth, async (req, res) => {
                 return res.status(402).send({ error: "UserName Already Present" })
             }
             else {
-                const PortalAddMember = new Member({ userName, name, phone, address, gymname, feeHistory: { registerdate, planeType, amount, feeDuration, remark }, dite, _id, gymDetails: { updateid, morningOpening, morningClosing, eveningOpening, eveningClosing, gymAddress, descreption, city ,category } })
-                // const ownerAddMember = await newMember.addmember(userName, name, phone, address, registerdate, planeType, amount, dite, feeDuration, _id)
+
+                const File1 = req.body.File1;
+
+                // let data = await getDescriptorsFromDB(File1)
+
+                // console.log(data);
+
+                if (true) {
+
+                    let result = await uploadLabeledImages([File1], userName);
+                    if (result)
+                        console.log("face registred");
+                    else
+                        return res.status(201).send({ error: "NO face found" })
+                }
+                else {
+                    return res.status(204).send({ error: "face already in DB" })
+
+                }
+
+
+
+
+
+                const PortalAddMember = new Member({ userName, name, phone, address, gymname, feeHistory: { registerdate, planeType, amount, feeDuration, remark }, dite, _id, gymDetails: { updateid, morningOpening, morningClosing, eveningOpening, eveningClosing, gymAddress, descreption, city, category } })
                 const z = newMember.newmembers.push({ userName, name, phone, address, registerdate, planeType, amount, dite, feeDuration, _id, feeHistory: { registerdate, feeDuration, planeType, amount, remark } })
+
+
                 res.status(200).json({ message: "Member Added Successfully" })
+
                 await newMember.save();
                 await PortalAddMember.save();
             }
@@ -261,9 +440,9 @@ routers.patch("/updatemember/:id", OwnerAuth, async (req, res) => {
 })
 
 routers.patch("/updategymDetails", OwnerAuth, async (req, res, next) => {
-    const { morningOpening, morningClosing, eveningOpening, eveningClosing, gymAddress, descreption,city, category } = req.body
+    const { morningOpening, morningClosing, eveningOpening, eveningClosing, gymAddress, descreption, city, category } = req.body
 
-    console.log(city+"  "+ category)
+    console.log(city + "  " + category)
     const gymnam = req.rootUser.gymname
     // const id = req.userID
 
@@ -288,7 +467,7 @@ routers.patch("/updategymDetails", OwnerAuth, async (req, res, next) => {
                 element.city = city;
                 element.category = category;
                 element.descreption = descreption;
-                
+
             });
             x.save();
         })
@@ -301,7 +480,7 @@ routers.patch("/updategymDetails", OwnerAuth, async (req, res, next) => {
         ownergymUpdate.gymAddress = gymAddress;
         ownergymUpdate.city = city;
         ownergymUpdate.category = category;
-        
+
         ownergymUpdate.descreption = descreption;
 
         // await memberPortal.save(); 
@@ -322,7 +501,13 @@ routers.delete("/deleteMember/:id", OwnerAuth, async (req, res) => {
     const deleteMemberOwner = await Owner.updateOne({ _id: owner_id }, { "$pull": { "newmembers": { "_id": _id } } }, { safe: true, multi: true })
     const deleteMemberPortal = await Member.findByIdAndDelete({ _id });
 
-    if (!deleteMemberOwner && !deleteMemberPortal) {
+    const memberdata = await Member.find({ _id });
+    // console.log(memberdata);
+    const userName=memberdata.userName;
+    
+    const deleteface=await FaceModel.findOneAndDelete({ userName });
+
+    if (!deleteMemberOwner && !deleteMemberPortal && !deleteface) {
         return res.status(400).send()
     }
     // res.status(200).json({ message: "UserDeletes" })
@@ -332,7 +517,7 @@ routers.delete("/deleteMember/:id", OwnerAuth, async (req, res) => {
 
 
 routers.post("/addgymDetails", OwnerAuth, async (req, res) => {
-    const { morningOpening, morningClosing, eveningOpening, eveningClosing, gymAddress, descreption, city , category } = req.body;
+    const { morningOpening, morningClosing, eveningOpening, eveningClosing, gymAddress, descreption, city, category } = req.body;
 
     if (!morningOpening) {
         console.log("PLZ fill the form");
@@ -342,22 +527,22 @@ routers.post("/addgymDetails", OwnerAuth, async (req, res) => {
     const addDetails = await Owner.findOne({ _id: req.userID });
 
     if (addDetails) {
-        const addExtraDetails = await addDetails.aboutgym(morningOpening, morningClosing, eveningOpening, eveningClosing, gymAddress, descreption, city , category);
+        const addExtraDetails = await addDetails.aboutgym(morningOpening, morningClosing, eveningOpening, eveningClosing, gymAddress, descreption, city, category);
         res.status(201).json({ message: "Details Added Successfully" })
     }
 
 })
 
 
-routers.get("/allgym",async(req,res)=>{
-    try{
-            const data=await Owner.find({},{password:0});
+routers.get("/allgym", async (req, res) => {
+    try {
+        const data = await Owner.find({}, { password: 0 });
 
-            // console.log(data);
-            
-            res.send(data.reverse());
+        // console.log(data);
+
+        res.send(data.reverse());
     }
-    catch(err){
+    catch (err) {
         console.log(err);
         res.sendStatus(404);
     }
@@ -381,86 +566,6 @@ routers.get("/onestudent/:id", OwnerAuth, (req, res) => {
 
 
 
-// routers.post("/markAttendance", OwnerAuth, async (req, res) => {
-
-//     const { studentId, isChecked, date } = req.body
-//     // console.log(`Attandence ${isChecked}, ID ${studentId} , Date ${date}`);
-
-//     if (!studentId) {
-//         return res.status(422).json({ error: "Fill All The Fields" });
-//     }
-
-//     try {
-//         const UserPresent = await Owner.findOne({ _id: req.userID });
-//         const memberPortal = await Member.findOne({ _id: studentId })
-//         // console.log(memberPortal);
-
-//         if (UserPresent) {
-//             const findStudent = UserPresent.newmembers.find((m) => m._id.toString() === studentId);
-//             findStudent.attendance.push({ date, isPresent: isChecked })
-//             const att = memberPortal.attendance.push({ date, isPresent: isChecked });
-//             UserPresent.markModified("students");
-//             await UserPresent.save();
-//             await memberPortal.save();
-//             res.status(200).json({ Success: true })
-
-//         } else {
-//             res.status(404).json({ error: "User not found" });
-//         }
-//     } catch (error) {
-//         console.error(error);
-//         res.status(500).json({ error: "Internal Server Error" });
-//     }
-// })
-
-
-// --------------------------------------------------------------------- 
-
-// routers.post("/markAttendance", OwnerAuth, async (req, res) => {
-//     const { studentId, isChecked, date } = req.body;
-
-//     if (!studentId) {
-//         return res.status(422).json({ error: "Fill All The Fields" });
-//     }
-
-//     try {
-//         const owner = await Owner.findOne({ _id: req.userID });
-//         const member = await Member.findOne({ _id: studentId });
-
-//         if (owner && member) {
-
-//             const findStudent = owner.newmembers.find((m) => m._id.toString() === studentId);
-
-
-//             findStudent.attendance.push({ date, isPresent: isChecked });
-
-//             member.attendance.push({ date, isPresent: isChecked });
-
-//             owner.markModified("newmembers");
-
-//             // Use findOneAndUpdate to get the updated document
-//             const updatedOwner = await Owner.findOneAndUpdate(
-//                 { _id: req.userID },
-//                 { $set: { newmembers: owner.newmembers } },
-//                 { new: true }
-//             );
-
-//             // Use findOneAndUpdate to get the updated document
-//             const updatedMember = await Member.findOneAndUpdate(
-//                 { _id: studentId },
-//                 { $set: { attendance: member.attendance } },
-//                 { new: true }
-//             );
-
-//             res.status(200).json({ Success: true });
-//         } else {
-//             res.status(404).json({ error: "User or Member not found" });
-//         }
-//     } catch (error) {
-//         console.error(error);
-//         res.status(500).json({ error: "Internal Server Error" });
-//     }
-// });
 
 
 routers.post("/markAttendance", OwnerAuth, async (req, res) => {
@@ -506,62 +611,51 @@ routers.post("/markAttendance", OwnerAuth, async (req, res) => {
     }
 });
 
+routers.post("/markfaceAttendance", OwnerAuth, async (req, res) => {
+    const { userName, isChecked, date } = req.body;
 
+    if (!userName || isChecked === undefined || !date) {
+        return res.status(422).json({ error: "Fill All The Fields" });
+    }
 
-// routers.post("/markAttendance", OwnerAuth, async (req, res) => {
-//     const { studentId, isChecked, date } = req.body;
+    try {
+        const owner = await Owner.findOne({ _id: req.userID });
+        const member = await Member.findOne({ userName }); // Find member by userName
 
-//     if (!studentId) {
-//         return res.status(422).json({ error: "Fill All The Fields" });
-//     }
+        if (owner && member) {
+            const filter = { _id: req.userID, 'newmembers.userName': userName }; // Modify filter based on userName
+            member.attendance.push({ date, isPresent: isChecked });
+            const update = {
+                $push: {
+                    'newmembers.$.attendance': {
+                        date,
+                        isPresent: isChecked
+                    }
+                }
+            };
+            const options = {
+                new: true,
+                runValidators: true,
+            };
 
-//     try {
-//         const owner = await Owner.findOne({ _id: req.userID });
-//         const member = await Member.findOne({ _id: studentId });
-
-//         if (owner && member) {
-//             // Find the index of the student in the owner's newmembers array
-//             const indexInOwner = owner.newmembers.findIndex((m) => m._id.toString() === studentId);
-
-//             if (indexInOwner !== -1) {
-//                 // Update the attendance for the found student in the owner's portal
-//                 owner.newmembers[indexInOwner].attendance.push({ date, isPresent: isChecked });
-//                 owner.markModified("newmembers");
-//             } else {
-//                 return res.status(404).json({ error: "Student not found in owner portal" });
-//             }
-
-//             // Use findOneAndUpdate to get the updated document for the owner
-//             const updatedOwner = await Owner.findOneAndUpdate(
-//                 { _id: req.userID },
-//                 { $set: { newmembers: owner.newmembers } },
-//                 { new: true }
-//             );
-
-//             // Update the attendance for the student in the member's portal
-//             member.attendance.push({ date, isPresent: isChecked });
-
-//             // Use findOneAndUpdate to get the updated document for the member
-//             const updatedMember = await Member.findOneAndUpdate(
-//                 { _id: studentId },
-//                 { $set: { attendance: member.attendance } },
-//                 { new: true }
-//             );
-
-//             res.status(200).json({ Success: true });
-//         } else {
-//             res.status(404).json({ error: "User or Member not found" });
-//         }
-//     } catch (error) {
-//         console.error(error);
-//         res.status(500).json({ error: "Internal Server Error" });
-//     }
-// });
+            const updatememberattendance = await Owner.findOneAndUpdate(filter, update, options);
+            await member.save();
+            if (updatememberattendance) {
+                res.status(200).json({ Success: true });
+            } else {
+                res.status(404).json({ error: "Student not found" });
+            }
+        } else {
+            res.status(404).json({ error: "User or Member not found" });
+        }
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Internal Server Error" });
+    }
+});
 
 
 
-
-// Logout ---------------------------------------------------------------------------------
 
 
 routers.get("/logoutuser", async (req, res) => {
